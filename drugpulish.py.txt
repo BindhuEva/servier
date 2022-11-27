@@ -1,20 +1,43 @@
-from pyspark.sql.functions import col,lower
+from pyspark.sql import SparkSession
+from pyspark.sql.types import *
+import pyspark.sql.functions as f
+from pyspark.sql.functions import udf
 
-drugs= spark.read.csv("drugs.csv")
-pubmed= spark.read.csv("pubmed.csv")
-clintrial = spark.read.csv("clinicaltrial.csv")
 
-schema = StructType([
-      StructField("id",IntegerType(),True),
-      StructField("title",StringType(),True),
-      StructField("date",StringType(),True),
-      StructField("journal",StringType(),True)
-])
-pubjson = spark.read.schema(schema)..option("mode", "DROPMALFORMED").json("pubmed.json")
 
-drug_list=drugs.rdd.map(lambda x: x[1].lower()).collect()
-pubmed.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
-clintrial.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
-pubjson.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
+@udf(returnType=StringType())
+def checkdrug(drug_name,title):
+    status = 'false'
+    if drug_name .lower() in title.lower():
+        status = 'true'
+    return status
 
-pyspark.sql.functions.union(pubmed, clintrial, pubjson).write.json("result.json")
+
+if __name__ == '__main__':
+    spark = SparkSession.builder.master("local[*]").appName("Hive_ACID_warehouseconnector").enableHiveSupport().getOrCreate()
+    drugs_df = spark.read.option("header","true").csv("data\\drugs.csv")
+
+    #Same
+    pubmed_df = spark.read.option("header","true").csv("data\\pubmed.csv").select('id','date','title','journal')
+    trails_df = spark.read.option("header", "true").csv("data\\clinical_trials.csv").withColumnRenamed("scientific_title","title").select('id','date','title','journal')
+    pubmed_json_df = spark.read.json("data\\pubmed.json").select('id','date','title','journal')
+
+    master_df =  pubmed_df.union(trails_df).union(pubmed_json_df)
+    #master_df.show()
+    #A drug is considered mentioned in a PubMed article or clinical trial if it is mentioned in the title of the publication.
+
+    #drug list
+    drug_list = drugs_df.select('drug').rdd.flatMap(list).collect()
+    drug_list = [drug.encode('utf-8') for drug in drug_list]
+
+    formated_df = master_df.withColumn("drug_list",f.lit('|'.join(drug_list)))
+    #formated_df.show(10,False)
+    final_df  = formated_df.withColumn('drug_name',f.split(formated_df['drug_list'],'\\|')).drop('drug_list')
+
+    #final_df.printSchema()
+    final_df = final_df.select('id','date','title','journal',f.explode(f.col('drug_name')))
+    final_df = final_df.withColumnRenamed('col', 'drug')
+    final_df = final_df.withColumn('drug_status',checkdrug(final_df.drug,final_df.title)).where(f.col('drug_status')=='true')
+
+    output_df =  final_df.select('drug','id','date','title','journal')
+    output_df.repartition(1).write.json('output')
