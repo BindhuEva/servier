@@ -1,0 +1,11 @@
+1. SELECT odate AS order_date, SUM(pprice * pqty) AS turnover
+FROM Transactions
+WHERE odate >= '2022-01-01' AND odate <= '2022-12-31'
+GROUP BY odate
+ORDER BY odate;
+
+
+2. SELECT * from
+(select cid, type, pprice*pqty as ppprice  from Transactions join product on Transactions.pid=product.id where type in ('FURNITURE','DECO')
+and odate between '2022-01-01' and '2022-12-31')tb1
+pivot ( sum(ppprice) for type in (FURNITURE,DECO)) as tb2
