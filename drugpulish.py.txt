@@ -1,0 +1,20 @@
+from pyspark.sql.functions import col,lower
+
+drugs= spark.read.csv("drugs.csv")
+pubmed= spark.read.csv("pubmed.csv")
+clintrial = spark.read.csv("clinicaltrial.csv")
+
+schema = StructType([
+      StructField("id",IntegerType(),True),
+      StructField("title",StringType(),True),
+      StructField("date",StringType(),True),
+      StructField("journal",StringType(),True)
+])
+pubjson = spark.read.schema(schema)..option("mode", "DROPMALFORMED").json("pubmed.json")
+
+drug_list=drugs.rdd.map(lambda x: x[1].lower()).collect()
+pubmed.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
+clintrial.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
+pubjson.filter(col("_c1").rlike('({})'.format('|'.join(drug_list))))#.show()
+
+pyspark.sql.functions.union(pubmed, clintrial, pubjson).write.json("result.json")
